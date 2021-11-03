@@ -13,53 +13,9 @@
 //ѕ≥сл€ чого, починаЇ процес запуску програм к≥лька раз≥в. якщо л≥м≥т програм вичерпаний, 
 //наступна програма автоматично завершуЇ роботу.
 
-//my semaphore class
-class Semaphore
-{
-private:
-	//maximum number of resources available at once
-	int MaxCounter;
-	//current number of resources occupied
-	int CurrentCounter = 0;
-
-public:
-	Semaphore()
-	{
-		srand(time(NULL));
-		MaxCounter = rand() % 13 + 3;
-		CurrentCounter = 0;
-	}
-	//check if semaphore can accept more resources
-	bool IsSemaphoreOpen() { return CurrentCounter < MaxCounter; }
-	//check if semaphore is empty
-	bool IsSemaphoreEmpty() { return !CurrentCounter; }
-
-	int GetMaxCounter() { return MaxCounter; }
-	int GetCurrentCounter() { return CurrentCounter; }
-	BOOL OccupyResource()
-	{
-		//semaphore is blocked
-		if (CurrentCounter == MaxCounter)
-			return FALSE;
-
-		//take up one resource
-		CurrentCounter++;
-		return TRUE;
-	}
-	BOOL ReleaseResource()
-	{
-		//semaphore is free
-		if (CurrentCounter == 0)
-			return FALSE;
-
-		CurrentCounter--;
-		return TRUE;
-	}
-};
-
 //all global declarations
 HINSTANCE hInst;
-Semaphore semaphore;
+HANDLE semaphore;
 
 ATOM MyRegisterClass(HINSTANCE);
 BOOL InitInstance(HINSTANCE, int);
@@ -104,14 +60,29 @@ ATOM MyRegisterClass(HINSTANCE hInstance)
 //creating window program
 BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 {
+	int MaxCounter; //how many apps can be opened at once
 	wchar_t buffer[45]{};
 	hInst = hInstance;
+
+	srand(time(NULL));
+
+	//trying to open existing semaphore
+	semaphore = OpenSemaphore(SEMAPHORE_ALL_ACCESS, FALSE, L"MySemaphore");
+	if (semaphore == NULL)
+	{
+		//there is none yet
+		MaxCounter = rand() % 9 + 2;
+		wsprintf(buffer, L"You can open up to %d window copies", MaxCounter);
+		MessageBox(NULL, buffer, L"Info", MB_OK | MB_ICONINFORMATION);
+
+		semaphore = CreateSemaphore(NULL, MaxCounter - 1, MaxCounter, L"MySemaphore");
+	}
 
 	HWND hWindow = CreateWindow(L"IPP2_LYSENKO",//window class name
 		L"Second lab",				//window name
 		WS_OVERLAPPED | WS_SYSMENU, //window style
-		530,						//x position on the screen
-		275, 						//y position on the screen
+		rand() % 1000,				//x position on the screen
+		rand() % 600, 				//y position on the screen
 		500,						//x-coordinate size
 		300,						//y-coordinate size
 		NULL,
@@ -135,47 +106,48 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 	if (!hWindow || !hButton)
 		return FALSE;
 
-	semaphore.OccupyResource();
 	ShowWindow(hWindow, SW_SHOW);	//show a window
-
-	wsprintf(buffer, L"You can open up to %d window copies", semaphore.GetMaxCounter());
-	MessageBox(hWindow, buffer, L"Info", MB_OK | MB_ICONINFORMATION);
 
 	return TRUE;
 }
 //message processing function
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
+	static STARTUPINFO si;
+	static PROCESS_INFORMATION pi;
+	DWORD dwWaitResult;
+
 	//process messages of the window
 	switch (message)
 	{
 	//there is only one button, no ifs are needed
 	case WM_COMMAND:
-	{   
-		//checking if the semaphore is blocked
-		if (!semaphore.IsSemaphoreOpen()) break;
+		dwWaitResult = WaitForSingleObject(semaphore, 0L);
 
-		HWND hWindow = CreateWindow(L"IPP2_LYSENKO", L"Second lab", WS_OVERLAPPED | WS_SYSMENU,
-			rand() % 1000, rand() % 500, 500, 300, NULL, NULL, hInst, NULL);
-
-		HWND hButton = CreateWindow(L"BUTTON", L"Make a copy", WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
-			165, 110, 150, 30, hWindow, NULL, hInst, NULL);
-
-		ShowWindow(hWindow, SW_SHOW);
-
-		//taking up a resource when window is created
-		semaphore.OccupyResource();
-	}
-	break;
-	case WM_CLOSE:
-		//releasing a resource when window is closed
-		semaphore.ReleaseResource();
-		DestroyWindow(hWnd);
+		switch (dwWaitResult)
+		{
+		// The semaphore object was signaled
+		case WAIT_OBJECT_0:
+			CreateProcess(L"IPP_lab2.exe", // Module name
+				NULL,			// Command line
+				NULL,           // Process handle not inheritable
+				NULL,           // Thread handle not inheritable
+				FALSE,          // Set handle inheritance to FALSE
+				NULL,           // No creation flags
+				NULL,           // Use parent's environment block
+				NULL,           // Use parent's starting directory 
+				&si,            // Pointer to STARTUPINFO structure
+				&pi);			// Pointer to PROCESS_INFORMATION structure
+		break;
+		// The semaphore object was non-signaled
+		case WAIT_TIMEOUT: return 0;
+		break;
+		}
 	break;
 	case WM_DESTROY:
-		//ending my application if no windows are left
-		if (semaphore.IsSemaphoreEmpty())
-			PostQuitMessage(0);
+		//ending my application and releasing semaphore one resource
+		ReleaseSemaphore(semaphore, 1, NULL);
+		PostQuitMessage(0);
 	break;
 	default:
 		//let Windows handle the rest
